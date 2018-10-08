@@ -1,0 +1,270 @@
+---
+title: "mono_diff_clus.Rmd"
+output: html_document
+
+// 2.13.18
+// Lets do this from the top - for just NE data
+// Goal here is to get diff. exp. gene lists for each of our clusters (States?)
+// 
+//    Watch out. Configured for a large memory machine
+---
+
+Load library
+```{r}
+library(monocle)
+```
+
+Load data frames
+```{r}
+raw_data <- read.csv('./justNE/all_NE_raw.csv', header=TRUE)
+row.names(raw_data) <- raw_data[,1]
+raw_data <- raw_data[ ,-1]
+
+meta_data <- read.csv('./justNE/all_NE_meta.csv', header=TRUE)
+row.names(meta_data) <- meta_data[,1]
+meta_data <- meta_data[ ,-1]
+```
+
+Sanity check
+```{r}
+dim(raw_data)
+dim(meta_data)
+```
+
+Create annotated data frame from meta_data
+```{r}
+meta_data_anno <- new("AnnotatedDataFrame", data = meta_data)
+```
+
+Create CellDataSet object
+```{r}
+cds_NE <- newCellDataSet(cellData = as.matrix(raw_data), phenoData = meta_data_anno, featureData = NULL, expressionFamily = negbinomial.size())
+```
+
+Estimate size and dispersion
+```{r}
+cds_NE <- estimateSizeFactors(cds_NE)
+cds_NE <- estimateDispersions(cds_NE)
+```
+
+
+CONSTRUCTING SINGLE CELL TRAJECTORIES
+
+
+1) Choosing genes that define progress
+      Using dpFeature technique
+```{r}
+cds_NE <- detectGenes(cds_NE, min_expr = 0.1)
+fData(cds_NE)$use_for_ordering <- fData(cds)$num_cells_expressed > 0.05 * ncol(cds_NE)
+```
+
+Find genes expressed in >10 cells
+```{r}
+all_NE_expressed_genes <- row.names(subset(fData(cds_NE), num_cells_expressed >= 10))
+```
+
+Plot PC variance
+```{r}
+plot_pc_variance_explained(cds_NE, return_all = F, verbose = T, max_components = 100) 
+```
+
+Run dimensionality reduction
+```{r}
+cds_NE <- reduceDimension(cds_NE, max_components = 2, norm_method = 'log', num_dim = 20, reduction_method = 'tSNE', verbose = T)
+```
+
+Cluster cells & plot
+```{r}
+cds_NE <- clusterCells(cds_NE, verbose = F)
+plot_cell_clusters(cds_NE)
+```
+
+Refine clustering params
+```{r}
+plot_rho_delta(cds_NE, rho_threshold = 2, delta_threshold = 4 )
+```
+
+...and recluster
+    Skipping this for now
+```{r}
+cds_NE <- clusterCells(cds_NE, rho_threshold = 3, delta_threshold = 10, skip_rho_sigma = T, verbose = F)
+plot_cell_clusters(cds_NE)
+```
+
+Differential gene expression test
+```{r}
+clustering_DEG_genes_NE <- differentialGeneTest(cds_NE[all_NE_expressed_genes,], fullModelFormulaStr = '~Cluster', cores = 10)
+```
+
+Select top 1000 genes
+```{r}
+all_NE_ordering_genes <- 
+  row.names(clustering_DEG_genes_NE)[order(clustering_DEG_genes_NE$qval)][1:1000]
+
+cds_NE <- setOrderingFilter(cds_NE, ordering_genes = all_NE_ordering_genes)
+cds_NE <- reduceDimension(cds_NE, method = 'DDRTree')
+cds_NE <- orderCells(cds_NE)
+```
+
+...And plot
+```{r}
+plot_cell_trajectory(cds_NE, color_by = "State")
+plot_cell_trajectory(cds_NE, color_by = "origin")
+plot_cell_trajectory(cds_NE, color_by = "age")
+plot_cell_trajectory(cds_NE, color_by = "Cluster")
+```
+
+Lets try a new way of plotting these trajectories
+```{r}
+# most basic case -- this works
+plot_complex_cell_trajectory(cds_NE, color_by = 'Cluster')
+plot_complex_cell_trajectory(cds_NE, color_by = 'State')
+plot_complex_cell_trajectory(cds_NE, color_by = 'age')
+
+# lets try a more complicated one
+plot_complex_cell_trajectory(cds_NE, color_by = 'age', cell_size = 0.5, cell_link_size = 0.3) + scale_size(range = c(0.2, 0.2))
+```
+
+
+BEAM Analysis
+
+
+Lets see if we can do some branch analysis
+    BEAM (Branched Expression Analysis Modeling) finds genes that drive the branching event at the specified branch point.
+```{r}
+all_BEAM1 <- BEAM(cds_NE, branch_point = 1, cores = 10)
+all_BEAM1 <- all_BEAM1[order(all_BEAM1$qval),]
+```
+
+....and plot
+not really working, but should be
+```{r}
+plot_genes_branched_heatmap(cds_NE[row.names(subset(all_BEAM1, qval < 1e-20)),], branch_point = 1, cluster_rows = T, show_rownames = T)
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(all_BEAM1)
+
+all_BEAM1_order <- all_BEAM1[order(all_BEAM1$qval),]
+dim(all_BEAM1_order)
+
+sub_BEAM1 <- all_BEAM1_order[1:100,]
+sub_BEAM1 <- sub_BEAM1[row.names(subset(sub_BEAM1, num_cells_expressed > 100)),]
+dim(sub_BEAM1)
+
+write.csv(sub_BEAM1, file = "sub_BEAM1.csv")
+```
+
+Lets repeat for branch point 2
+```{r}
+all_BEAM2 <- BEAM(cds_NE, branch_point = 2, cores = 10)
+all_BEAM2 <- all_BEAM2[order(all_BEAM2$qval),]
+```
+
+....and plot
+```{r}
+plot_genes_branched_heatmap(cds_NE[row.names(subset(all_BEAM2, qval < 1e-20)),], branch_point = 2, cluster_rows = T, show_rownames = T)
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(all_BEAM2)
+
+all_BEAM2_order <- all_BEAM2[order(all_BEAM2$qval),]
+dim(all_BEAM2_order)
+
+sub_BEAM2 <- all_BEAM2_order[1:100,]
+sub_BEAM2 <- sub_BEAM2[row.names(subset(sub_BEAM2, num_cells_expressed > 100)),]
+dim(sub_BEAM2)
+
+write.csv(sub_BEAM2, file = "sub_BEAM2.csv")
+```
+
+
+
+Clustering Genes by Pseudotemporal Expression Pattern
+
+
+First find diff. expressed genes
+```{r}
+diff_NE <- differentialGeneTest(cds_NE[all_NE_expressed_genes,], fullModelFormulaStr = "~sm.ns(Pseudotime)", cores = 10)
+
+sig_gene_names <- row.names(subset(diff_NE, qval < 1e-45))
+```
+
+Now plot
+```{r}
+plot_pseudotime_heatmap(cds_NE[sig_gene_names,], show_rownames = T)
+```
+
+
+
+DIFFERENTIAL GENE TEST BY CLUSTER
+  lets hope this works...
+  
+
+Defining lists of cells for each state...feels like I shouldnt actually have to do this?? 
+```{r}
+s1 <- c()
+for(i in 1:length(colnames(raw_data))){
+  if(cds_NE$State[i] == 1) {
+    s1 <- append(s1, colnames(raw_data)[i])
+  }
+}
+
+s2 <- c()
+for(i in 1:length(colnames(raw_data))){
+  if(cds_NE$State[i] == 2) {
+    s2 <- append(s2, colnames(raw_data)[i])
+  }
+}
+
+s3 <- c()
+for(i in 1:length(colnames(raw_data))){
+  if(cds_NE$State[i] == 3) {
+    s3 <- append(s3, colnames(raw_data)[i])
+  }
+}
+
+s4 <- c()
+for(i in 1:length(colnames(raw_data))){
+  if(cds_NE$State[i] == 4) {
+    s4 <- append(s4, colnames(raw_data)[i])
+  }
+}
+
+s5 <- c()
+for(i in 1:length(colnames(raw_data))){
+  if(cds_NE$State[i] == 5) {
+    s5 <- append(s5, colnames(raw_data)[i])
+  }
+}
+```
+
+Think this is working
+```{r}
+diff_NE_clus1 <- differentialGeneTest(cds_NE[all_NE_expressed_genes,s1], fullModelFormulaStr = "~ Cluster", cores = 10)
+sig_gene_names_clus1 <- subset(diff_NE_clus1, qval < 1e-4)
+
+diff_NE_clus2 <- differentialGeneTest(cds_NE[all_NE_expressed_genes,s2], fullModelFormulaStr = "~ Cluster", cores = 10)
+sig_gene_names_clus2 <- subset(diff_NE_clus2, qval < 1e-2)
+
+diff_NE_clus3 <- differentialGeneTest(cds_NE[all_NE_expressed_genes,s3], fullModelFormulaStr = "~ Cluster", cores = 10)
+sig_gene_names_clus3 <- subset(diff_NE_clus3, qval < 1e-20)
+
+diff_NE_clus4 <- differentialGeneTest(cds_NE[all_NE_expressed_genes,s4], fullModelFormulaStr = "~ Cluster", cores = 10)
+sig_gene_names_clus4 <- subset(diff_NE_clus4, qval < 1e-2)
+
+diff_NE_clus5 <- differentialGeneTest(cds_NE[all_NE_expressed_genes,s5], fullModelFormulaStr = "~ Cluster", cores = 10)
+sig_gene_names_clus5 <- subset(diff_NE_clus5, qval < 1e-10)
+```
+
+```{r}
+write.csv(sig_gene_names_clus1, file = "sig_gene_names_clus1.csv")
+write.csv(sig_gene_names_clus2, file = "sig_gene_names_clus2.csv")
+write.csv(sig_gene_names_clus3, file = "sig_gene_names_clus3.csv")
+write.csv(sig_gene_names_clus4, file = "sig_gene_names_clus4.csv")
+write.csv(sig_gene_names_clus5, file = "sig_gene_names_clus5.csv")
+```
+

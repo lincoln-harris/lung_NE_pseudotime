@@ -1,0 +1,109 @@
+---
+title: "monocle ntbk"
+output: html_notebook
+---
+
+Bioconductor install
+```{r}
+source("http://bioconductor.org/biocLite.R")
+biocLite()
+```
+
+Monocle install
+```{r}
+biocLite("monocle")
+```
+
+Load library
+```{r}
+library(monocle)
+```
+
+Additional info 
+```{r}
+sessionInfo()
+```
+
+Load dataframe
+```{r}
+adult_lung <- read.csv("Raw_data_adult_lung.csv", header=TRUE)
+row.names(adult_lung) <- adult_lung[,1]
+adult_lung <- adult_lung[ ,-1]
+```
+
+Create CellDataSet object
+```{r}
+ad <- newCellDataSet(cellData = as.matrix(adult_lung), phenoData = NULL, featureData = NULL, expressionFamily = negbinomial.size())
+```
+
+Estimate size and dispersion
+```{r}
+ad <- estimateSizeFactors(ad)
+ad <- estimateDispersions(ad)
+```
+
+Find genes expressed in >10 cells
+    Does this step work??
+```{r}
+ad_expressed_genes <-  row.names(subset(fData(ad), num_cells_expressed >= 10))
+```
+
+
+        
+CONSTRUCTING SINGLE CELL TRAJECTORIES
+
+
+1) Choosing genes that define progress
+      Using dpFeature technique
+```{r}
+ad <- detectGenes(ad, min_expr = 0.1)
+fData(ad)$use_for_ordering <- fData(ad)$num_cells_expressed > 0.05 * ncol(ad)
+```
+
+Plot PC variance
+      This is taking way longer than it should
+```{r}
+plot_pc_variance_explained(ad, return_all = F, verbose = T, max_components = 100) 
+```
+Plot elbows at ~15. Use this as number of PC 
+
+Run dimensionality reduction
+```{r}
+ad <- reduceDimension(ad, max_components = 2, norm_method = 'log', num_dim = 15, reduction_method = 'tSNE', verbose = T)
+```
+
+Cluster cells & plot
+```{r}
+ad <- clusterCells(ad, verbose = F)
+plot_cell_clusters(ad)
+```
+
+Refine clustering params
+```{r}
+plot_rho_delta(ad, rho_threshold = 2, delta_threshold = 4 )
+```
+
+...and recluster
+    Definetly not sure what I'm doing here
+```{r}
+ad <- clusterCells(ad, rho_threshold = 3, delta_threshold = 6, skip_rho_sigma = T, verbose = F)
+plot_cell_clusters(ad)
+```
+
+Differential gene expression test
+```{r}
+clustering_DEG_genes <- differentialGeneTest(ad[ad_expressed_genes,], fullModelFormulaStr = '~Cluster', cores = 1)
+```
+
+Select top 1000 genes
+```{r}
+ad_ordering_genes <- 
+  row.names(clustering_DEG_genes)[order(clustering_DEG_genes$qval)][1:1000]
+
+ad <- setOrderingFilter(ad, ordering_genes = ad_ordering_genes)
+ad <- reduceDimension(ad, method = 'DDRTree')
+ad <- orderCells(ad)
+#ad <- orderCells(ad, root_state = GM_state(ad))
+plot_cell_trajectory(ad)
+```
+

@@ -1,0 +1,116 @@
+---
+title: "equalize_and_correlate.Rmd"
+output: html_document
+
+Lets see if we can equalize these two matricies (ie. make sure gene names are all the same, in the same order), and then correlate each col from fetal with every col from adult. 
+
+---
+
+Load library
+```{r}
+library(dplyr)
+```
+
+Load data
+```{r}
+fetal_raw <- read.csv("raw_fetal.csv", header=TRUE)
+adult_raw <- read.csv("Raw_data_adult_lung.csv", header=TRUE)
+```
+
+Sanity check
+```{r}
+dim(fetal_raw)
+dim(adult_raw)
+```
+
+Set genes in fetal equal to those found in adult
+```{r}
+common_genes <- row.names(adult_raw)
+fetal_raw1 <- fetal_raw[common_genes,]
+```
+
+Sanity check
+```{r}
+dim(fetal_raw1)
+dim(adult_raw)
+```
+
+Need to drop c1 from fetal_raw bc its gene names 
+```{r}
+row.names.fetal_raw1 <- fetal_raw1[1]
+fetal_raw2 <- fetal_raw1[,-(1), drop=FALSE]
+adult_raw1 <- adult_raw[,-(1), drop=FALSE]
+row.names.fetal_raw2 <- row.names.fetal_raw1    #pretty sure this works
+row.names.adult_raw1 <- row.names.fetal_raw2
+```
+
+Lets try to correlate shit
+
+single col test cases
+```{r}
+cor(fetal_raw2[c(1:10),c(1:10)], adult_raw1[c(1:10),c(1:10)])    #works!!!
+cor(fetal_raw2[1200], adult_raw1[200])
+cor(fetal_raw2[500], adult_raw[100])
+```
+
+big bertha
+```{r}
+for(i in 1:1456){                    #works? but crazy slow    
+  for(j in 1:580){
+    cor(fetal_raw2[i], adult_raw1[j])
+  }
+}
+```
+
+Remove cols with 0 sum from fetal..this will be useful in next step 
+```{r}
+which(colSums(fetal_raw2)==0)
+z_cols <- c("D12.1000500501.zsGreen.5.1", "A3.1000500502.zsGreen.5.1", "G12.1000500203.zsGreen.2.1", "G2.1000500205.zsGreen.2.1", "F12.1000500501.zsGreen.5.1", "G4.1000500502.zsGreen.5.1", "F11.1000500504.zsGreen.5.1", "C8.1000500203.zsGreen.2.1", "B3.1000500204.zsGreen.2.1")
+
+fetal_sub <- subset(fetal_raw2, select=-c(D12.1000500501.zsGreen.5.1, A3.1000500502.zsGreen.5.1, G12.1000500203.zsGreen.2.1, G2.1000500205.zsGreen.2.1, F12.1000500501.zsGreen.5.1, G4.1000500502.zsGreen.5.1, F11.1000500504.zsGreen.5.1, C8.1000500203.zsGreen.2.1, B3.1000500204.zsGreen.2.1))
+dim(fetal_sub)   #this works!!
+#which(colSums(adult_raw1)==0) #none, it looks like...
+```
+
+Do correlation on entire matrix, all at once. 
+outputs corr_mat
+     rows: fetal_cell_IDs
+     cols: adult_cell_IDs
+```{r}
+cor_mat <- cor(fetal_sub, adult_raw1)   #holy mother of god this works!!!
+dim(cor_mat)
+```
+
+For row in corr_mat, can we find max val, and the corresponding cell_ID?
+```{r}
+c <- colnames(cor_mat)
+max.col(cor_mat)
+c_max <- max.col(cor_mat)
+c[187]  #this works
+```
+
+Now lets try to export c_max to a dataframe
+```{r}
+df_c <- data.frame(c_max)
+row.names(df_c) <- row.names(cor_mat)
+df_c$adultCell_ID<-NA
+df_c$c_max[10]          #test
+
+for(i in 1:1447){               #think this works better now
+  v <- df_c$c_max[i]
+  df_c$adultCell_ID[i] <- c[v]
+}
+```
+
+Try to do some substitutions? 
+```{r}
+names(df_c)[1] <- "fetalCell_ID"   #no, this doesn't work 
+```
+
+Export to .csv
+```{r}
+write.csv(df_c, file = "corr_max.csv")
+#write.csv(fetal_raw2, file = "fetal_raw2.csv")
+#write.csv(adult_raw, file = "adult_raw1.csv")
+```
+

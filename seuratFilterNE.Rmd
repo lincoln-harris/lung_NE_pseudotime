@@ -1,0 +1,434 @@
+---
+title: "seuratFilterNE.Rmd"
+output: html_document
+
+// 2.15.18
+// Lets try to filter out some of our fetal/adult NE cells based on Seurat clustering AND 
+// biological annotation (age)
+//
+//    Works best on a large memory machine
+---
+
+Clear the environment
+  Careful!!
+```{r}
+rm(list = ls())
+```
+
+Load library
+```{r}
+library(monocle)
+```
+
+Load data frames
+```{r}
+raw_data <- read.csv('all_NE_raw.csv', header=TRUE)
+row.names(raw_data) <- raw_data[,1]
+raw_data <- raw_data[ ,-1]
+
+meta_s <- read.csv('all_NE_seurat_meta.csv', header=TRUE)
+row.names(meta_s) <- meta_s[,1]
+meta_s <- meta_s[ ,-1]
+```
+
+Lets fuck with our metadata
+  Want to change type of 'age' field so that we can get nice plots
+```{r}
+for(i in 1:length(row.names(meta_s))){
+  if (meta_s[i,]$age == '1'){
+    meta_s[i,]$age <- "one"
+  }
+  if (meta_s[i,]$age == '2'){
+    meta_s[i,]$age <- "two"
+  }
+  if (meta_s[i,]$age == '3'){
+    meta_s[i,]$age <- "three"
+  }
+  if (meta_s[i,]$age == '4'){
+    meta_s[i,]$age <- "four"
+  }
+   if (meta_s[i,]$age == '5'){
+    meta_s[i,]$age <- "five"
+   }
+   if (meta_s[i,]$age == '6'){
+    meta_s[i,]$age <- "six"
+   }
+   if (meta_s[i,]$age == '7'){
+    meta_s[i,]$age <- "seven"
+  }
+}
+```
+
+  Now do the same shit for res.0.5
+```{r}
+for(i in 1:length(row.names(meta_s))){
+  if (meta_s[i,]$res.0.5 == '0'){
+    meta_s[i,]$res.0.5 <- "zero"
+  }
+  if (meta_s[i,]$res.0.5 == '1'){
+    meta_s[i,]$res.0.5 <- "one"
+  }
+   if (meta_s[i,]$res.0.5 == '2'){
+    meta_s[i,]$res.0.5 <- "two"
+  }
+}
+```
+
+Create annotated data frame from meta_data
+```{r}
+meta_data_anno <- new("AnnotatedDataFrame", data = meta_s)
+```
+
+Create CellDataSet object
+```{r}
+cds_NE_s <- newCellDataSet(cellData = as.matrix(raw_data), phenoData = meta_data_anno, featureData = NULL, expressionFamily = negbinomial.size())
+```
+
+Estimate size and dispersion
+```{r}
+cds_NE_s <- estimateSizeFactors(cds_NE_s)
+cds_NE_s <- estimateDispersions(cds_NE_s)
+```
+
+
+CONSTRUCTING SINGLE CELL TRAJECTORIES
+
+
+1) Choosing genes that define progress
+      Using dpFeature technique
+```{r}
+cds_NE_s <- detectGenes(cds_NE_s, min_expr = 0.1)
+fData(cds_NE_s)$use_for_ordering <- fData(cds_NE_s)$num_cells_expressed > 0.05 * ncol(cds_NE_s)
+```
+
+Find genes expressed in >10 cells
+```{r}
+all_NE_expressed_genes <- row.names(subset(fData(cds_NE_s), num_cells_expressed >= 10))
+```
+
+Plot PC variance
+```{r}
+plot_pc_variance_explained(cds_NE_s, return_all = F, verbose = T, max_components = 100) 
+```
+
+Run dimensionality reduction
+```{r}
+cds_NE_s <- reduceDimension(cds_NE_s, max_components = 2, norm_method = 'log', num_dim = 20, reduction_method = 'tSNE', verbose = T)
+```
+
+Cluster cells & plot
+```{r}
+cds_NE_s <- clusterCells(cds_NE_s, verbose = F)
+plot_cell_clusters(cds_NE_s)
+```
+
+Refine clustering params
+```{r}
+plot_rho_delta(cds_NE_s, rho_threshold = 12, delta_threshold = 30)
+```
+
+...and recluster
+    Skipping this for now
+```{r}
+#cds_NE_s <- clusterCells(cds_NE_s, rho_threshold = 3, delta_threshold = 10, skip_rho_sigma = T, verbose = F)
+cds_NE_s <- clusterCells(cds_NE_s, rho_threshold = 12, delta_threshold = 30, skip_rho_sigma = T, verbose = F)
+#plot_cell_clusters(cds_NE_s)
+```
+
+Differential gene expression test
+```{r}
+clustering_DEG_genes_NE <- differentialGeneTest(cds_NE_s[all_NE_expressed_genes,], fullModelFormulaStr = '~Cluster', cores = detectCores() - 2)
+```
+
+Select top 1000 genes
+```{r}
+all_NE_ordering_genes <- 
+  row.names(clustering_DEG_genes_NE)[order(clustering_DEG_genes_NE$qval)][1:1000]
+
+cds_NE_s <- setOrderingFilter(cds_NE_s, ordering_genes = all_NE_ordering_genes)
+cds_NE_s <- reduceDimension(cds_NE_s, method = 'DDRTree')
+cds_NE_s <- orderCells(cds_NE_s)
+```
+
+...And plot
+```{r}
+colors <- c("one" = "steelblue", "two" = "grey53", "three" = "wheat3", "four" = "darkgoldenrod2", "five" = "darkorange2", "six" = "firebrick", "seven" = "red")
+
+plot_cell_trajectory(cds_NE_s, color_by = "State")
+plot_cell_trajectory(cds_NE_s, color_by = "origin")
+plot_cell_trajectory(cds_NE_s, color_by = "age") + scale_color_manual(values = colors)
+plot_cell_trajectory(cds_NE_s, color_by = "Cluster")
+plot_cell_trajectory(cds_NE_s, color_by = "Pseudotime")
+```
+
+Truly dont think this will work
+    Holy shit did this just work
+      I actually dont believe it
+        I think the gods of science just smiled down on me
+```{r}
+cds_NE_s_alt <- orderCells(cds_NE_s, root_state = 5)
+plot_cell_trajectory(cds_NE_s_alt)
+
+#pdf("NE_traj_map_pseudotime_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_s_alt, color_by = "Pseudotime")
+#dev.off()
+
+#pdf("NE_traj_map_age_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_s_alt, color_by = "age") + scale_color_manual(values = colors)
+#dev.off()
+
+colors1 <- c("zero" = "mediumblue", "one" = "violetred2", "two" = "grey53")
+
+#pdf("NE_traj_map_seurat_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_s_alt, color_by = "res.0.5") + scale_color_manual(values = colors1)
+#dev.off()
+```
+
+Lets try a new way of plotting these trajectories
+```{r}
+# most basic case -- this works
+plot_complex_cell_trajectory(cds_NE_s, color_by = 'Cluster')
+plot_complex_cell_trajectory(cds_NE_s, color_by = 'State')
+plot_complex_cell_trajectory(cds_NE_s, color_by = 'age')
+
+# lets try a more complicated one
+#   oh shit this works!!!
+pdf("allNE_dendro.pdf", width = 10, height = 6)
+plot_complex_cell_trajectory(cds_NE_s, root_states = 5, color_by = 'age', cell_size = 0.9, cell_link_size = 0.7) + scale_size(range = c(0.2, 0.2)) + scale_color_manual(values = colors)
+dev.off()
+
+#plot_complex_cell_trajectory(cds_NE_s, color_by = 'age', cell_size = 0.9, cell_link_size = 0.7) + scale_size(range = c(0.2, 0.2)) + scale_color_manual(values = colors)
+```
+
+
+#####################################################################
+#####################################################################
+///////////////  DOING ACTUAL FILTERING HERE   //////////////////////
+#####################################################################
+#####################################################################
+
+NEED TO REMAKE CELL OBJECT
+
+Old list -> if Seurat c1 & age 5-7
+```{r}
+oList <- c()
+for(i in 1:length(row.names(meta_s))){
+  if(meta_s$res.0.5[i] == "one") {
+    if((meta_s$age[i] == "five") | (meta_s$age[i] == "six") | (meta_s$age[i] == "seven")){
+      oList <- append(oList, row.names(meta_s)[i])
+    }
+  }
+}
+
+length(oList)
+```
+
+Young list -> if Seurat c2,3 and age 1-4
+```{r}
+yList <- c()
+for(i in 1:length(row.names(meta_s))){
+  if(meta_s$res.0.5[i] != "one") {
+    if((meta_s$age[i] == "one") | (meta_s$age[i] == "two") | (meta_s$age[i] == "three") |    (meta_s$age[i] == "four")){
+      yList <- append(yList, row.names(meta_s)[i])
+    }
+  }
+}
+
+length(yList)
+```
+
+Remake meta and raw data
+  Essentially we've made dfs with the Seurat outliers removed
+```{r}
+bigList <- c()
+bigList <- append(oList, yList)
+length(bigList)
+
+raw_data_sf <- raw_data[,bigList]
+meta_data_sf <- meta_s[bigList,]
+
+dim(raw_data_sf)
+dim(meta_data_sf)
+```
+
+Lets fuck with our metadata
+  Want to change type of 'age' field so that we can get nice plots
+```{r}
+for(i in 1:length(row.names(meta_data_sf))){
+  if (meta_data_sf[i,]$age == '1'){
+    meta_data_sf[i,]$age <- "one"
+  }
+  if (meta_data_sf[i,]$age == '2'){
+    meta_data_sf[i,]$age <- "two"
+  }
+  if (meta_data_sf[i,]$age == '3'){
+    meta_data_sf[i,]$age <- "three"
+  }
+  if (meta_data_sf[i,]$age == '4'){
+    meta_data_sf[i,]$age <- "four"
+  }
+   if (meta_data_sf[i,]$age == '5'){
+    meta_data_sf[i,]$age <- "five"
+   }
+   if (meta_data_sf[i,]$age == '6'){
+    meta_data_sf[i,]$age <- "six"
+   }
+   if (meta_data_sf[i,]$age == '7'){
+    meta_data_sf[i,]$age <- "seven"
+  }
+}
+```
+
+  Now do the same shit for res.0.5
+```{r}
+for(i in 1:length(row.names(meta_data_sf))){
+  if (meta_data_sf[i,]$res.0.5 == '0'){
+    meta_data_sf[i,]$res.0.5 <- "zero"
+  }
+  if (meta_data_sf[i,]$res.0.5 == '1'){
+    meta_data_sf[i,]$res.0.5 <- "one"
+  }
+   if (meta_data_sf[i,]$res.0.5 == '2'){
+    meta_data_sf[i,]$res.0.5 <- "two"
+  }
+}
+```
+
+Create annotated data frame from meta_data
+```{r}
+meta_data_sf_anno <- new("AnnotatedDataFrame", data = meta_data_sf)
+```
+
+Create CellDataSet object
+```{r}
+cds_NE_sf <- newCellDataSet(cellData = as.matrix(raw_data_sf), phenoData = meta_data_sf_anno, featureData = NULL, expressionFamily = negbinomial.size())
+```
+
+Estimate size and dispersion
+```{r}
+cds_NE_sf <- estimateSizeFactors(cds_NE_sf)
+cds_NE_sf <- estimateDispersions(cds_NE_sf)
+```
+
+
+
+CONSTRUCTING SINGLE CELL TRAJECTORIES
+
+
+1) Choosing genes that define progress
+      Using dpFeature technique
+```{r}
+cds_NE_sf <- detectGenes(cds_NE_sf, min_expr = 0.1)
+fData(cds_NE_sf)$use_for_ordering <- fData(cds_NE_sf)$num_cells_expressed > 0.05 * ncol(cds_NE_sf)
+```
+
+Find genes expressed in >10 cells
+```{r}
+all_NE_expressed_genes_sf <- row.names(subset(fData(cds_NE_sf), num_cells_expressed >= 10))
+```
+
+Plot PC variance
+```{r}
+plot_pc_variance_explained(cds_NE_sf, return_all = F, verbose = T, max_components = 100) 
+```
+
+Run dimensionality reduction
+```{r}
+cds_NE_sf <- reduceDimension(cds_NE_sf, max_components = 2, norm_method = 'log', num_dim = 20, reduction_method = 'tSNE', verbose = T)
+```
+
+Cluster cells & plot
+```{r}
+cds_NE_sf <- clusterCells(cds_NE_sf, verbose = F)
+plot_cell_clusters(cds_NE_sf)
+```
+
+Refine clustering params
+```{r}
+plot_rho_delta(cds_NE_sf, rho_threshold = 10, delta_threshold = 9)
+```
+
+...and recluster
+```{r}
+cds_NE_sf <- clusterCells(cds_NE_sf, rho_threshold = 10, delta_threshold = 9, skip_rho_sigma = T, verbose = F)
+plot_cell_clusters(cds_NE_sf)
+```
+
+Differential gene expression test
+```{r}
+clustering_DEG_genes_NE_sf <- differentialGeneTest(cds_NE_sf[all_NE_expressed_genes_sf,], fullModelFormulaStr = '~Cluster', cores = detectCores() - 2)
+```
+
+Select top 1000 genes
+```{r}
+all_NE_ordering_genes_sf <- 
+  row.names(clustering_DEG_genes_NE_sf)[order(clustering_DEG_genes_NE_sf$qval)][1:1000]
+
+cds_NE_sf <- setOrderingFilter(cds_NE_sf, ordering_genes = all_NE_ordering_genes_sf)
+cds_NE_sf <- reduceDimension(cds_NE_sf, method = 'DDRTree')
+cds_NE_sf <- orderCells(cds_NE_sf)
+```
+
+...And plot
+```{r}
+colors <- c("one" = "steelblue", "two" = "grey53", "three" = "wheat3", "four" = "darkgoldenrod2", "five" = "darkorange2", "six" = "firebrick", "seven" = "red")
+
+plot_cell_trajectory(cds_NE_sf, color_by = "State")
+plot_cell_trajectory(cds_NE_sf, color_by = "origin")
+plot_cell_trajectory(cds_NE_sf, color_by = "age") + scale_color_manual(values = colors)
+plot_cell_trajectory(cds_NE_sf, color_by = "Cluster")
+plot_cell_trajectory(cds_NE_sf, color_by = "Pseudotime")
+```
+
+Reorder cells
+  Oh shit this works
+```{r}
+cds_NE_sf_alt <- orderCells(cds_NE_sf, root_state = 3)
+plot_cell_trajectory(cds_NE_sf)
+
+#pdf("seuratFilterNE_pseudotime_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_sf_alt, color_by = "Pseudotime")
+#dev.off()
+
+#pdf("seuratFilterNE_age_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_sf_alt, color_by = "age") + scale_color_manual(values = colors)
+#dev.off()
+
+#pdf("seuratFilterNE_seurat_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_sf_alt, color_by = "res.0.5")
+#dev.off()
+```
+
+
+NOW lets do DE analysis...
+
+BEAM 
+Branched Expression Analysis Modeling finds genes that drive the branching event at the specified branch point.
+```{r}
+sfBEAM1 <- BEAM(cds_NE_sf_alt, branch_point = 1, cores = detectCores() - 2)
+sfBEAM1 <- sfBEAM1[order(sfBEAM1$qval),]
+```
+
+....and plot
+not really working, but should be
+```{r}
+#plot_genes_branched_heatmap(cds_f[row.names(subset(fBEAM1, qval < 1e-20)),], branch_point = 1, cluster_rows = T, show_rownames = T)
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(sfBEAM1)
+
+sfBEAM1_order <- sfBEAM1[order(sfBEAM1$qval),]
+dim(sfBEAM1_order)
+
+sub_sfBEAM1 <- sfBEAM1_order[1:100,]
+sub_sfBEAM1 <- sub_sfBEAM1[row.names(subset(sub_sfBEAM1, num_cells_expressed > 100)),]
+dim(sub_sfBEAM1)
+
+write.csv(sub_sfBEAM1, file = "sub_sfBEAM1.csv")
+```
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////
+

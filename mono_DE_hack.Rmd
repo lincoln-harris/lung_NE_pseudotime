@@ -1,0 +1,274 @@
+---
+title: "mono_DE_hack.Rmd"
+output: html_document
+
+// 2.20.18
+// Want to generate State info with Mono, so that I can export metadata and abuse the findAllMarkers() 
+// function in Seurat. 
+// Not actually doing any DE gene tests in here...leaving all of that to Seurat
+//
+// This the big deal right here, bruh
+---
+
+Clear the environment
+  Careful!!
+```{r}
+rm(list = ls())
+```
+
+Load library
+```{r}
+library(monocle)
+```
+
+Load data frames
+```{r}
+raw_data <- read.csv('all_NE_raw.csv', header=TRUE)
+row.names(raw_data) <- raw_data[,1]
+raw_data <- raw_data[ ,-1]
+
+meta_data <- read.csv('all_NE_meta.csv', header=TRUE)
+row.names(meta_data) <- meta_data[,1]
+meta_data <- meta_data[ ,-1]
+```
+
+Lets fuck with our metadata
+  Want to change type of 'age' field so that we can get nice plots
+```{r}
+for(i in 1:length(row.names(meta_data))){
+  if (meta_data[i,]$age == '1'){
+    meta_data[i,]$age <- "E14"
+  }
+  if (meta_data[i,]$age == '2'){
+    meta_data[i,]$age <- "E15"
+  }
+  if (meta_data[i,]$age == '3'){
+    meta_data[i,]$age <- "E17.5"
+  }
+  if (meta_data[i,]$age == '4'){
+    meta_data[i,]$age <- "E19.5"
+  }
+   if (meta_data[i,]$age == '5'){
+    meta_data[i,]$age <- "PN21"
+   }
+   if (meta_data[i,]$age == '6'){
+    meta_data[i,]$age <- "PN90"
+   }
+   if (meta_data[i,]$age == '7'){
+    meta_data[i,]$age <- "PN120"
+  }
+}
+```
+
+Sanity check
+```{r}
+dim(raw_data)
+dim(meta_data)
+```
+
+Create annotated data frame from meta_data
+```{r}
+meta_data_anno <- new("AnnotatedDataFrame", data = meta_data)
+```
+
+Create CellDataSet object
+```{r}
+cds_NE <- newCellDataSet(cellData = as.matrix(raw_data), phenoData = meta_data_anno, featureData = NULL, expressionFamily = negbinomial.size())
+```
+
+Estimate size and dispersion
+```{r}
+cds_NE <- estimateSizeFactors(cds_NE)
+cds_NE <- estimateDispersions(cds_NE)
+```
+
+
+CONSTRUCTING SINGLE CELL TRAJECTORIES
+
+
+1) Choosing genes that define progress
+      Using dpFeature technique
+```{r}
+cds_NE <- detectGenes(cds_NE, min_expr = 0.1)
+fData(cds_NE)$use_for_ordering <- fData(cds_NE)$num_cells_expressed > 0.05 * ncol(cds_NE)
+```
+
+Find genes expressed in >10 cells
+```{r}
+all_NE_expressed_genes <- row.names(subset(fData(cds_NE), num_cells_expressed >= 10))
+```
+
+Plot PC variance
+```{r}
+plot_pc_variance_explained(cds_NE, return_all = F, verbose = T, max_components = 100) 
+```
+
+Run dimensionality reduction
+```{r}
+cds_NE <- reduceDimension(cds_NE, max_components = 2, norm_method = 'log', num_dim = 20, reduction_method = 'tSNE', verbose = T)
+```
+
+Cluster cells & plot
+```{r}
+cds_NE <- clusterCells(cds_NE, verbose = F)
+plot_cell_clusters(cds_NE)
+```
+
+Refine clustering params
+```{r}
+plot_rho_delta(cds_NE, rho_threshold = 12, delta_threshold = 30)
+```
+
+...and recluster
+```{r}
+cds_NE_alt <- clusterCells(cds_NE, rho_threshold = 12, delta_threshold = 30, skip_rho_sigma = T, verbose = F)
+plot_cell_clusters(cds_NE_alt)
+#plot_cell_clusters(cds_NE_alt, color_by = "State")
+```
+
+Differential gene expression test
+```{r}
+clustering_DEG_genes_NE <- differentialGeneTest(cds_NE_alt[all_NE_expressed_genes,], fullModelFormulaStr = '~Cluster', cores = detectCores() - 2)
+```
+
+Select top 1000 genes
+```{r}
+all_NE_ordering_genes <- 
+  row.names(clustering_DEG_genes_NE)[order(clustering_DEG_genes_NE$qval)][1:1000]
+
+cds_NE_alt <- setOrderingFilter(cds_NE_alt, ordering_genes = all_NE_ordering_genes)
+cds_NE_alt <- reduceDimension(cds_NE_alt, method = 'DDRTree')
+cds_NE_alt <- orderCells(cds_NE_alt)
+```
+
+...And plot
+```{r}
+colors <- c("E14" = "steelblue", "E15" = "grey53", "E17.5" = "wheat3", "E19.5" = "darkgoldenrod2", "PN21" = "darkorange2", "PN90" = "firebrick", "PN120" = "red")
+
+plot_cell_trajectory(cds_NE_alt, color_by = "State")
+plot_cell_trajectory(cds_NE_alt, color_by = "origin")
+plot_cell_trajectory(cds_NE_alt, color_by = "age") + scale_color_manual(values = colors)
+plot_cell_trajectory(cds_NE_alt, color_by = "Cluster")
+plot_cell_trajectory(cds_NE_alt, color_by = "Pseudotime")
+```
+
+Truly dont think this will work
+    Holy shit did this just work
+      I actually dont believe it
+        I think the gods of science just smiled down on me
+```{r}
+cds_NE_alt_r <- orderCells(cds_NE_alt, root_state = 5)
+plot_cell_trajectory(cds_NE_alt_r)
+
+pdf("NE_traj_map_pseudotime_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_alt_r, color_by = "Pseudotime")
+dev.off()
+
+pdf("NE_traj_map_age_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(cds_NE_alt_r, color_by = "age") + scale_color_manual(values = colors)
+dev.off()
+```
+
+And another plot
+```{r}
+plot_cell_clusters(cds_NE_alt_r)
+plot_cell_clusters(cds_NE_alt_r, color_by = "State")
+```
+
+Lets try a new way of plotting these trajectories
+```{r}
+# most basic case -- this works
+plot_complex_cell_trajectory(cds_NE_alt_r, color_by = 'Cluster')
+plot_complex_cell_trajectory(cds_NE_alt_r, color_by = 'State')
+plot_complex_cell_trajectory(cds_NE_alt_r, color_by = 'age')
+
+# lets try a more complicated one
+pdf("allNE_dendro.pdf", width = 10, height = 6)
+plot_complex_cell_trajectory(cds_NE_alt_r, root_states = 5, color_by = 'age', cell_size = 0.9, cell_link_size = 0.7) + scale_size(range = c(0.2, 0.2)) + scale_color_manual(values = colors)
+dev.off()
+```
+
+Can we export metadata? 
+  Need to add a 'state' col first
+```{r}
+meta_data$State<-NA
+
+for(i in 1:length(row.names(meta_data))){
+  meta_data$State[i] <- cds_NE_alt_r$State[i]
+}
+
+#write.csv(meta_data, "meta_data_mono.csv")
+```
+
+
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+BEAM Analysis
+
+
+Lets see if we can do some branch analysis
+    BEAM (Branched Expression Analysis Modeling) finds genes that drive the branching event at the specified branch point.
+```{r}
+all_BEAM1 <- BEAM(cds_NE_alt_r, branch_point = 1, cores = detectCores() - 2)
+all_BEAM1 <- all_BEAM1[order(all_BEAM1$qval),]
+```
+
+....and plot
+not really working, but should be
+```{r}
+pdf("BEAM1.pdf", height = 8, width = 8)
+plot_genes_branched_heatmap(cds_NE_alt_r[row.names(subset(all_BEAM1, qval < 1e-30)),], branch_point = 1, cluster_rows = T, show_rownames = T)
+dev.off()
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(all_BEAM1)
+
+all_BEAM1_order <- all_BEAM1[order(all_BEAM1$qval),]
+dim(all_BEAM1_order)
+
+sub_BEAM1 <- all_BEAM1_order[1:100,]
+sub_BEAM1 <- sub_BEAM1[row.names(subset(sub_BEAM1, num_cells_expressed > 100)),]
+dim(sub_BEAM1)
+
+write.csv(sub_BEAM1, file = "sub_BEAM1.csv")
+```
+
+Lets repeat for branch point 2
+```{r}
+all_BEAM2 <- BEAM(cds_NE_alt_r, branch_point = 2, cores = detectCores() - 2)
+all_BEAM2 <- all_BEAM2[order(all_BEAM2$qval),]
+```
+
+....and plot
+```{r}
+pdf("BEAM2.pdf", height = 8, width = 8)
+plot_genes_branched_heatmap(cds_NE_alt_r[row.names(subset(all_BEAM2, qval < 1e-15)),], branch_point = 2, cluster_rows = T, show_rownames = T)
+dev.off()
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(all_BEAM2)
+
+all_BEAM2_order <- all_BEAM2[order(all_BEAM2$qval),]
+dim(all_BEAM2_order)
+
+sub_BEAM2 <- all_BEAM2_order[1:100,]
+sub_BEAM2 <- sub_BEAM2[row.names(subset(sub_BEAM2, num_cells_expressed > 100)),]
+dim(sub_BEAM2)
+
+write.csv(sub_BEAM2, file = "sub_BEAM2.csv")
+```
+
+
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+

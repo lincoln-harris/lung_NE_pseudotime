@@ -1,0 +1,248 @@
+---
+title: "Intro to Seurat"
+output: html_notebook
+---
+
+Basic Package Installs (should only need to do these once)
+```{r}
+install.packages("tidyverse")
+install.packages("dplyr")
+devtools::install_github("tidyverse/dplyr")
+```
+
+Load library
+```{r}
+library(Seurat)
+library(Matrix)
+library(dplyr)
+```
+
+Read in data file and associated metadata
+```{r}
+raw.data <- read.csv("Raw_data_adult_lung.csv", header=TRUE)
+row.names(raw.data) <- raw.data[,1]
+raw.data <- raw.data[ ,-1]
+
+#metaData <- read.csv("Metadata_adult_lung.csv", sep=",", header = TRUE, row.names = 1)
+#metaData_noDubs <- read.csv("Metadata_adult_lung_noDubs.csv", sep=",", header = TRUE, row.names = 1)
+
+#raw.data_noDubs <- raw.data[,row.names(metaData_noDubs)]  #defines raw.data.less as ONLY cells found w/in metaData
+```
+
+Check dims to make sure everything loaded correctly
+```{r}
+dim(raw.data)
+#dim(metaData)
+#dim(raw.data_noDubs)
+```
+
+Create Seurat Object
+```{r}
+#adultLung <- CreateSeuratObject(raw.data = raw.data_noDubs, meta.data = metaData_noDubs)
+adultLung <- CreateSeuratObject(raw.data = raw.data)
+```
+
+Sanity check to make sure seurat obj was created correctly
+```{r}
+#adultLung@meta.data$cell.type
+```
+
+Seurat looks for UMI values in the gene expression matrix, for some reason. We need to tell it to look for n reads instead 
+```{r}
+colnames(adultLung@meta.data)[colnames(adultLung@meta.data) == 'nUMI'] <- 'nReads'
+```
+
+Find any ribosomal associated gene
+```{r}
+ribo.genes <- grep(pattern = "^Rp[sl][[:digit:]]", x = rownames(x = adultLung@data), value = TRUE)
+```
+
+Calculate percent ribo genes
+```{r}
+percent.ribo <- Matrix::colSums(adultLung@raw.data[ribo.genes,])/Matrix::colSums(adultLung@raw.data)
+
+```
+
+Add a percent ribo gene col to metadata (now a part of seurat obj)
+```{r}
+adultLung <- AddMetaData(object = adultLung, metadata = percent.ribo, col.name = "percent.ribo")
+```
+
+Sanity check: plot genes per cell vs reads per cell.
+```{r}
+GenePlot(object = adultLung, gene1 = "nReads", gene2 = "nGene", use.raw=T)
+```
+
+Filter cells by expression/gene count low/high thresholds
+```{r}
+adultLung <- FilterCells(object = adultLung, subset.names = c("nGene", "nReads"), low.thresholds = c(500, 50000), high.thresholds = c(25000, 2000000))
+```
+
+Normalize data
+```{r}
+adultLung <- NormalizeData(object = adultLung)
+adultLung <- ScaleData(object = adultLung, vars.to.regress = c("nReads", "percent.ribo","Rn45s"))
+adultLung <- FindVariableGenes(object = adultLung, do.plot = TRUE, x.high.cutoff = Inf, y.cutoff = 0.5)
+adultLung <- RunPCA(object = adultLung, do.print = FALSE)
+adultLung <- ProjectPCA(object = adultLung, do.print = FALSE)
+```
+
+Really couldn’t tell you what we’re doing here…
+```{r}
+PCHeatmap(object = adultLung, pc.use = 1:3, cells.use = 200, do.balanced = TRUE, label.columns = FALSE, num.genes = 8)
+
+PCElbowPlot(object = adultLung)
+
+```
+
+Set number of principal components to be used for clustering
+```{r}
+n.pcs = 12
+```
+
+Set resolution - higher resolution yields more clusters
+```{r}
+res.used <- 0.5
+```
+
+Find Clusters (Can play around with k.param. Default is 30. Decrease for smaller number of cells)
+```{r}
+adultLung <- FindClusters(object = adultLung, reduction.type = "pca", dims.use = 1:n.pcs, resolution = res.used, print.output = 0, save.SNN = TRUE, force.recalc = TRUE, k.param = 10)
+```
+
+Running the actual tSNE here
+```{r}
+adultLung <- RunTSNE(object = adultLung, dims.use = 1:n.pcs, seed.use = 10, perplexity=20)
+```
+
+…and visualize
+```{r}
+#TSNEPlot(object = adultLung_noDubs, do.label = T)
+TSNEPlot(object = adultLung, do.label = T)
+```
+
+Mapping our Seurat clustered cells to the metadata assignments (this step is kind of cheating)
+```{r}
+#TSNEPlot(object = adultLung_noDubs, do.label = T, group.by = "cell.type")
+#TSNEPlot(object = adultLung, do.label = T, group.by = "cell.type")
+```
+
+Check expression of genes of interest...by cell type:
+```{r}
+genes_to_check_sMuscle = c('Cnn1', 'Susd5', 'Actc1', 'Asb2', 'Kcna5', 'Ldb3', 'Myocd', 'Eln', 'Actg2', 'Acta2')
+genes_to_check_NE = c('Resp18', 'Pcsk1', 'Nov', 'Scg5', 'Nnat', 'Calca', 'Ptprn', 'Slc35d3', 'Ascl1', 'Chga')
+genes_to_check_glial = c('Kcna1', 'Cdh19', 'Sox10', 'Gfra3', 'Plp1', 'Gpr37l1', 'Art3', 'Rasgef1c', 'Kcna6', 'Gfap')
+
+genes_to_check_fibro = c('Mfap5', 'Ddr2', 'Sod3', 'Loxl1', 'Crispld2', 'Bgn', 'Mgp', 'Eln', 'Pdgfra', 'Pdgfrb')
+genes_to_check_endo = c('Icam2', 'Cldn5', 'Cdh5', 'Pecam1', 'Egfl7', 'Tie1', 'Mir126', 'Ctla2a', 'Tek', 'Flt1')
+genes_to_check_club = c('Gabrp', 'Cckar', 'Scgb3a2', 'Hp', 'Kcnk2', 'Upk3a', 'Cldn10', 'Pon1', 'Cyp2f2', 'Scgb1a1')
+
+genes_to_check_ciliated = c('6820408C15Rik', '1600029I14Rik', 'Cdhr3', 'Mapk15', 'Spef2', 'Ccdc108', 'Rgs22', 'Foxj1', 'Ccdc153', 'Tmem212')
+
+genes_to_check_basal = c('Krt15', 'Aqp3', 'Dapl1', 'Krt5', 'Trp63', 'Gpr87', 'B3galt2', 'Defb1', 'Ccdc3', 'Krt14')
+genes_to_check_AT2 = c('Napsa', 'Lyz1', 'Chia', 'Hc', 'S100g', 'Egfl6', 'Sftpc', 'Sftpb', 'Mlc1', 'Muc1')
+genes_to_check_AT1 = c('Rtkn2', 'Igfbp2', 'Rasgrf2', 'Popdc3', 'Mir1199', 'Col4a3', 'Cdkn2b', 'Unc13d', 'Pdpn', 'Ager')
+
+```
+
+...and plot (can change genes_to_check_?? field)
+```{r}
+FeaturePlot(adultLung, genes_to_check_c0, pt.size = 1, nCol = 3)
+```
+
+How big are clusters? 
+```{r}
+table(adultLung@ident)
+```
+
+What markers ID a specific cluster? This one will take a while
+```{r}
+adultLung.markers <- FindAllMarkers(object = adultLung, only.pos = TRUE, min.pct = 0.25, thresh.use = 0.25)
+```
+
+Display top 5 markers by cluster
+```{r}
+adultLung.markers %>% group_by(cluster) %>% top_n(5, avg_logFC)
+```
+
+Assign IDs to our clusters
+```{r}
+adultLung <- StashIdent(object = adultLung, save.name = "cluster.ids")
+cluster.ids <- c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+annotation <- c("NE", "NE", "Fibro", "Club", "Fibro", "Glial", "AT2", "Basal", "Endo", "AT1", "Ciliated")  
+
+adultLung@meta.data[,'annotation'] <- plyr::mapvalues(x = adultLung@meta.data$cluster.ids, from = cluster.ids, to = annotation)
+
+TSNEPlot(object = adultLung, do.label = TRUE, pt.size = 0.5, group.by='annotation')
+```
+
+
+Subset by cluster, then add three new cols, do calculations on each new col. 
+
+
+```{r}
+list.all <- list()
+clusters <- sort(unique(adultLung@meta.data$res.0.5))
+
+for(i in 1:length(clusters)){
+    temp <-  subset(adultLung.markers, cluster==clusters[i]) #doing my subsetting here
+    temp[,"pctSub"] <- temp$pct.1-temp$pct.2
+    temp[,"weight_logFC"] <- temp$avg_logFC*20
+    temp[,"weight_pctSub"] <- temp$pctSub*50
+    temp[,"metaVal"] <- temp$weight_logFC+temp$weight_pctSub
+    list.all[[i]] <-  temp
+}
+names(list.all) <- clusters
+
+```
+
+Read $list.all into individual (by cluster) data frames
+```{r}
+
+#df0 <- do.call(rbind, lapply(list.all[0], data.frame, stringsAsFactors=FALSE))
+df1 <- do.call(rbind, lapply(list.all[1], data.frame, stringsAsFactors=FALSE))
+df2 <- do.call(rbind, lapply(list.all[2], data.frame, stringsAsFactors=FALSE))
+df3 <- do.call(rbind, lapply(list.all[3], data.frame, stringsAsFactors=FALSE))
+df4 <- do.call(rbind, lapply(list.all[4], data.frame, stringsAsFactors=FALSE))
+df5 <- do.call(rbind, lapply(list.all[5], data.frame, stringsAsFactors=FALSE))
+df6 <- do.call(rbind, lapply(list.all[6], data.frame, stringsAsFactors=FALSE))
+df7 <- do.call(rbind, lapply(list.all[7], data.frame, stringsAsFactors=FALSE))
+df8 <- do.call(rbind, lapply(list.all[8], data.frame, stringsAsFactors=FALSE))
+df9<- do.call(rbind, lapply(list.all[9], data.frame, stringsAsFactors=FALSE))
+df10<- do.call(rbind, lapply(list.all[10], data.frame, stringsAsFactors=FALSE))
+df11<- do.call(rbind, lapply(list.all[11], data.frame, stringsAsFactors=FALSE))
+```
+
+Sort each dataframe by $metaVal
+```{r}
+#df0_order <- df0[order(-df0$metaVal),]
+df1_order <- df1[order(-df1$metaVal),]
+df2_order <- df2[order(-df2$metaVal),]
+df3_order <- df3[order(-df3$metaVal),]
+df4_order <- df4[order(-df4$metaVal),]
+df5_order <- df5[order(-df5$metaVal),]
+df6_order <- df6[order(-df6$metaVal),]
+df7_order <- df7[order(-df7$metaVal),]
+df8_order <- df8[order(-df8$metaVal),]
+df9_order <- df9[order(-df9$metaVal),]
+df10_order <- df10[order(-df10$metaVal),]
+df11_order <- df10[order(-df11$metaVal),]
+```
+
+Concat dataframes and export to a single .csv
+```{r}
+
+df_order_big <- rbind(df1_order, df2_order, df3_order, df4_order, df5_order, df6_order, df7_order, df8_order, df9_order, df10_order, df11_order)
+
+write.csv(x = df_order_big, file = "./adultLung_markers_all.csv", row.names = FALSE)
+
+#write.csv(x = df9_order, file = "./df9_order.csv", row.names = FALSE)  #whats going on here??
+```
+
+
+Export final metadata
+
+```{r}
+write.csv(adultLung@meta.data, file = "./adultLung_seurat_metadata.csv")
+```
+

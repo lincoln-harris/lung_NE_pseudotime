@@ -1,0 +1,301 @@
+---
+title: "monocle_ntbk7"
+output: html_document
+date:  1/17/18
+
+Ok, think this is working now. Wanted to run monocle on combined raw and metadata sets created previously. Wanted to use Seurat metadata as well. 
+---
+
+Load library
+```{r}
+library(monocle)
+```
+
+Load raw and meta
+```{r}
+all_raw1 <- read.csv("my_comb_raw.csv", header=TRUE)
+row.names(all_raw1) <- all_raw1[,1]
+all_raw1 <- all_raw1[ ,-1]
+
+all_meta <- read.csv("all_NE_seurat_meta.csv", header=TRUE)
+row.names(all_meta) <- all_meta[,1]
+all_meta <- all_meta[ ,-1]
+
+dim(all_raw1)
+dim(all_meta)
+
+common_names <- colnames(all_raw1)
+all_meta <- all_meta[common_names,]
+
+dim(all_raw1)
+dim(all_meta)
+```
+
+Create AnnotatedDataFrame
+```{r}
+pd_NE <- new("AnnotatedDataFrame", data = all_meta)
+```
+
+Create CellDataSet object
+```{r}
+all_NE <- newCellDataSet(cellData = as.matrix(all_raw1), phenoData = pd_NE, featureData = NULL, expressionFamily = negbinomial.size())
+```
+
+Estimate size and dispersion
+```{r}
+all_NE <- estimateSizeFactors(all_NE)
+all_NE <- estimateDispersions(all_NE)
+```
+
+
+CONSTRUCTING SINGLE CELL TRAJECTORIES
+
+
+1) Choosing genes that define progress
+      Using dpFeature technique
+```{r}
+all_NE <- detectGenes(all_NE, min_expr = 0.1)
+fData(all_NE)$use_for_ordering <- fData(all_NE)$num_cells_expressed > 0.05 * ncol(all_NE)
+```
+
+Find genes expressed in >10 cells
+    Does this step work??
+```{r}
+all_NE_expressed_genes <- row.names(subset(fData(all_NE), num_cells_expressed >= 10))
+```
+
+Plot PC variance
+```{r}
+plot_pc_variance_explained(all_NE, return_all = F, verbose = T, max_components = 100) 
+```
+
+Run dimensionality reduction
+```{r}
+all_NE <- reduceDimension(all_NE, max_components = 2, norm_method = 'log', num_dim = 20, reduction_method = 'tSNE', verbose = T)
+```
+
+Cluster cells & plot
+```{r}
+all_NE <- clusterCells(all_NE, verbose = F)
+plot_cell_clusters(all_NE)
+```
+
+Refine clustering params
+```{r}
+plot_rho_delta(all_NE, rho_threshold = 2, delta_threshold = 4 )
+```
+
+...and recluster
+    Skipping this for now
+```{r}
+all_NE <- clusterCells(all_NE, rho_threshold = 3, delta_threshold = 10, skip_rho_sigma = T, verbose = F)
+plot_cell_clusters(all_NE)
+```
+
+Differential gene expression test
+```{r}
+clustering_DEG_genes_NE <- differentialGeneTest(all_NE[all_NE_expressed_genes,], fullModelFormulaStr = '~Cluster', cores = 1)
+```
+
+Select top 1000 genes
+```{r}
+all_NE_ordering_genes <- 
+  row.names(clustering_DEG_genes_NE)[order(clustering_DEG_genes_NE$qval)][1:1000]
+
+all_NE <- setOrderingFilter(all_NE, ordering_genes = all_NE_ordering_genes)
+all_NE <- reduceDimension(all_NE, method = 'DDRTree')
+all_NE <- orderCells(all_NE)
+
+#This doesnt seem to be doing anything
+#all_NE <- orderCells(all_NE, root_state = 5, reverse = T)
+```
+
+...And plot
+```{r}
+plot_cell_trajectory(all_NE)
+plot_cell_trajectory(all_NE, color_by = "origin")
+
+#pdf("seurat_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(all_NE, color_by = "res.0.5")
+#dev.off()
+
+#pdf("age_color.pdf", height = 5, width = 10)
+plot_cell_trajectory(all_NE, color_by = "age")
+#dev.off()
+```
+
+Want to find specific GOIs
+    lets expand this fucker
+    for reference:
+    genes_to_check_NE = c('Resp18', 'Pcsk1', 'Nov', 'Scg5', 'Nnat', 'Calca', 'Ptprn', 'Slc35d3', 'Ascl1', 'Chga')
+```{r}
+index1 <- 1
+index2 <- 1
+index3 <- 1
+index4 <- 1
+index5 <- 1
+index6 <- 1
+index7 <- 1
+index8 <- 1
+index9 <- 1
+index10 <- 10
+
+for(i in 1:length(row.names(comb_raw))) {
+  if (row.names(comb_raw)[i] == 'Calca'){
+    index1 <- i
+  }
+  if (row.names(comb_raw)[i] == 'Fstl1'){
+    index2 <- i
+  }
+  if (row.names(comb_raw)[i] == 'Chtf18'){
+    index3 <- i
+  }
+   if (row.names(comb_raw)[i] == 'Trpc4'){
+    index4 <- i
+   }
+   if (row.names(comb_raw)[i] == 'Acad9'){
+    index5 <- i
+   }
+   if (row.names(comb_raw)[i] == 'Tmem98'){
+    index6 <- i
+   }
+   if (row.names(comb_raw)[i] == 'D0H4S114'){
+    index7 <- i
+   }
+   if (row.names(comb_raw)[i] == 'Fkbp10'){
+    index8 <- i
+   }
+   if (row.names(comb_raw)[i] == 'Rhbdf2'){
+    index9 <- i
+   }
+   if (row.names(comb_raw)[i] == 'Mdk'){
+    index10 <- i
+  }
+}
+
+row.names(comb_raw)[index1]
+row.names(comb_raw)[index2]
+row.names(comb_raw)[index3]
+row.names(comb_raw)[index4]
+row.names(comb_raw)[index5]
+row.names(comb_raw)[index6]
+row.names(comb_raw)[index7]
+row.names(comb_raw)[index8]
+row.names(comb_raw)[index9]
+row.names(comb_raw)[index10]
+```
+
+plot again
+```{r}
+#pdf("calca_map_1.16.pdf", height = 5, width = 10)
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index1,])
+#dev.off()
+
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index2,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index3,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index4,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index5,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index6,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index7,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index8,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index9,])
+plot_cell_trajectory(all_NE, color_by = all_NE@assayData$exprs[index10,])
+```
+
+
+
+
+BEAM Analysis
+
+
+
+Lets see if we can do some branch analysis
+    BEAM (Branched Expression Analysis Modeling) finds genes that drive the branching event at the specified branch point.
+```{r}
+all_BEAM1 <- BEAM(all_NE, branch_point = 1, cores = 4)
+all_BEAM1 <- all_BEAM1[order(all_BEAM1$qval),]
+```
+
+....and plot
+not really working, but should be
+```{r}
+#pdf("all_branched_heatmap.pdf", height = 10, width = 10)
+plot_genes_branched_heatmap(all_NE[row.names(subset(all_BEAM1, qval < 1e-20)),], branch_point = 2, cluster_rows = T, show_rownames = T)
+#dev.off()
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(all_BEAM1)
+
+#works
+all_BEAM1_order <- all_BEAM1[order(all_BEAM1$qval),]
+dim(all_BEAM1_order)
+
+sub_BEAM1 <- all_BEAM1_order[1:100,]
+sub_BEAM1 <- sub_BEAM1[row.names(subset(sub_BEAM1, num_cells_expressed > 100)),]
+dim(sub_BEAM1)
+
+write.csv(sub_BEAM1, file = "sub_BEAM1.csv")
+```
+
+
+
+Lets repeat for branch point 2
+
+
+```{r}
+all_BEAM2 <- BEAM(all_NE, branch_point = 2, cores = 4)
+all_BEAM2 <- all_BEAM2[order(all_BEAM2$qval),]
+```
+
+....and plot
+not really working, but should be
+```{r}
+#pdf("all_branched_heatmap.pdf", height = 10, width = 10)
+plot_genes_branched_heatmap(all_NE[row.names(subset(all_BEAM2, qval < 1e-20)),], branch_point = 2, cluster_rows = T, show_rownames = T)
+#dev.off()
+```
+
+Sorting BEAM genes so that I'm only grabbing the ones with the highest qval that are expressed in >100 cells. Call this 'sub_BEAM'
+```{r}
+dim(all_BEAM2)
+
+#works
+all_BEAM2_order <- all_BEAM2[order(all_BEAM2$qval),]
+dim(all_BEAM2_order)
+
+sub_BEAM2 <- all_BEAM2_order[1:100,]
+sub_BEAM2 <- sub_BEAM2[row.names(subset(sub_BEAM2, num_cells_expressed > 100)),]
+dim(sub_BEAM2)
+
+write.csv(sub_BEAM2, file = "sub_BEAM2.csv")
+```
+
+
+
+Clustering Genes by Pseudotemporal Expression Pattern
+
+
+First find diff. expressed genes
+```{r}
+diff_NE <- differentialGeneTest(all_NE[all_NE_expressed_genes,], fullModelFormulaStr = "~sm.ns(Pseudotime)", cores = 4)
+
+sig_gene_names <- row.names(subset(diff_NE, qval < 1e-45))
+```
+
+Now plot
+```{r}
+#pdf("pseudotime_heatmap.pdf", height = 10, width = 10)
+plot_pseudotime_heatmap(all_NE[sig_gene_names,], show_rownames = T)
+#dev.off()
+```
+
+Can we do a differential gene test by cluster?? 
+```{r}
+diff_NE_clus <- differentialGeneTest(fd_NE[fdNE_expressed_genes,], fullModelFormulaStr = "~ Cluster ", cores = 4)
+
+sig_gene_names_clus <- row.names(subset(diff_NE_clus, qval < 1e-15))
+
+plot_pseudotime_heatmap(fd_NE[sig_gene_names_clus,], num_clusters = 5, cores = 4, show_rownames = T)
+```
